@@ -14,7 +14,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22 # Subimos para o Node 22
+          node-version: 22
           cache: 'yarn'
 
       - name: Setup Java JDK 17
@@ -28,7 +28,7 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          yarn install --ignore-engines # Ignora validações chatas de versão do Node
+          yarn install --ignore-engines
 
       - name: Prebuild Expo (Gerar pasta nativa do Android)
         run: |
@@ -48,6 +48,8 @@ jobs:
             -dname "CN=Stump, OU=Dev, O=Stump, L=Stump, S=Stump, C=US"
 
       - name: Build and Sign Android App (Assemble Release APK)
+        env:
+          SENTRY_DISABLE_AUTO_UPLOAD: 'true' # Desativa o upload automático de sourcemaps do Sentry
         run: |
           cd apps/expo/android
           chmod +x gradlew
