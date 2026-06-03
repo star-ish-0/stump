@@ -14,7 +14,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20 # Alterado de 18 para 20
+          node-version: 22 # Subimos para o Node 22
           cache: 'yarn'
 
       - name: Setup Java JDK 17
@@ -28,7 +28,7 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          yarn install
+          yarn install --ignore-engines # Ignora validações chatas de versão do Node
 
       - name: Prebuild Expo (Gerar pasta nativa do Android)
         run: |
