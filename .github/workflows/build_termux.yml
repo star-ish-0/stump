@@ -1,0 +1,149 @@
+name: Build Server + Web (ARM64 glibc)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-server-web:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ========== Build Web ==========
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Enable Yarn
+        run: corepack enable
+
+      - name: Install web dependencies
+        run: yarn install
+        working-directory: apps/web
+
+      - name: Build web frontend
+        run: yarn build
+        working-directory: apps/web
+
+      # O vite output vai para apps/web/dist (veja vite.config.ts: outDir: '../dist')
+      # Agora precisa estar em apps/dist/ para o server encontrar
+      - name: Move dist to correct location
+        run: |
+          mkdir -p apps/dist
+          cp -r apps/web/dist/* apps/dist/
+          ls -la apps/dist/
+
+      # ========== Build Server ==========
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+
+      - name: Verify Rust target
+        run: rustup target list --installed | grep aarch64-unknown-linux-gnu || rustup target add aarch64-unknown-linux-gnu
+
+      - name: Install cross-compile toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-aarch64-glibc-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-aarch64-glibc-
+
+      - name: Build server (ARM64 glibc)
+        run: |
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
+          cargo build --release --target aarch64-unknown-linux-gnu -p stump_server
+
+      # ========== Package Everything ==========
+      - name: Create deployment package
+        run: |
+          mkdir -p stump-arm64
+          cp target/aarch64-unknown-linux-gnu/release/stump_server stump-arm64/
+          cp -r apps/dist stump-arm64/
+          
+          # Create run script
+          cat > stump-arm64/run.sh << 'EOF'
+          #!/bin/bash
+          # Stump Server - Web + Backend Bundle
+          # A web deve estar na pasta 'dist/' dentro do mesmo diretório que este script
+          
+          DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+          export STUMP_CLIENT_DIR="$DIR/dist"
+          
+          echo "Starting Stump Server..."
+          echo "Web files at: $STUMP_CLIENT_DIR"
+          
+          exec "$DIR/stump_server" "$@"
+          EOF
+          chmod +x stump-arm64/run.sh
+          
+          # Create README
+          cat > stump-arm64/README.md << 'EOF'
+          # Stump Server + Web (ARM64)
+          
+          ## Como usar
+          
+          ```bash
+          # Extrair
+          tar xzf stump-server-web-arm64.tar.gz
+          cd stump-arm64
+          
+          # Rodar
+          ./run.sh
+          # ou
+          ./stump_server
+          ```
+          
+          O servidor vai servir a web automaticamente em `http://localhost:3000`
+          
+          ## Estrutura
+          - `stump_server` - Servidor Rust compilado para ARM64
+          - `dist/` - Interface web (HTML, CSS, JS)
+          - `run.sh` - Script para rodar o servidor
+          
+          ## Configurações
+          
+          Use variáveis de ambiente ou arquivo de config para customizar:
+          ```bash
+          STUMP_CLIENT_DIR=./dist ./stump_server
+          ```
+          EOF
+          
+          # List contents
+          ls -la stump-arm64/
+          ls -la stump-arm64/dist/
+
+      - name: Create tarball
+        run: |
+          tar czf stump-server-web-arm64.tar.gz stump-arm64/
+          ls -lh stump-server-web-arm64.tar.gz
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: stump-server-web-arm64
+          path: stump-server-web-arm64.tar.gz
+          retention-days: 14
+
+      - name: Info
+        run: |
+          echo "✅ Build completo!"
+          echo "📦 Package: stump-server-web-arm64.tar.gz"
+          echo "🎯 Target: ARM64 (glibc)"
+          echo ""
+          echo "Para usar:"
+          echo "  tar xzf stump-server-web-arm64.tar.gz"
+          echo "  cd stump-arm64"
+          echo "  ./run.sh"
