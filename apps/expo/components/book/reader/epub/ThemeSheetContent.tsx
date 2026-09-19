@@ -14,14 +14,14 @@ import {
 	VolumeNavigation,
 } from './controls'
 
-export default function ThemeSheetContent() {
-	// FIXME: The settings after ThemeSelect on iOS are having really wonky issues that
-	// are honestly kinda fucking annoying at this point lol. It seems some of them break in
-	// alignment randomly, adding a View container around the native element fixes it (sometimes)
-	// but then breaks other rows. It's killing me. I'm ignoring it for now but AHH
+type ThemeSheetContentProps = {
+	setTouchingSlider: React.Dispatch<React.SetStateAction<boolean>>
+}
+
+export default function ThemeSheetContent({ setTouchingSlider }: ThemeSheetContentProps) {
 	return (
 		<View className="gap-8 py-3 android:pb-12 flex-1">
-			<Brightness />
+			<Brightness setTouchingSlider={setTouchingSlider} />
 
 			<ThemeSelect />
 

@@ -12,9 +12,9 @@ import { z } from 'zod'
 
 import { useColors } from '~/lib/constants'
 import { startOidcLogin } from '~/lib/sdk/auth'
+import { useActiveServer } from '~/providers/ActiveServerProvider'
 import { useUserStore } from '~/stores'
 
-import { useActiveServer } from './activeServer'
 import { Button, Input, Text } from './ui'
 import { Icon } from './ui/icon'
 
@@ -33,6 +33,7 @@ export default function ServerAuthDialog({ isOpen, onClose }: ServerAuthDialogPr
 	})
 
 	const ref = useRef<TrueSheet>(null)
+	const hasBeenPresentedRef = useRef(false)
 
 	const [isPasswordVisible, setIsPasswordVisible] = useState(false)
 	const [isOidcLoading, setIsOidcLoading] = useState(false)
@@ -50,9 +51,10 @@ export default function ServerAuthDialog({ isOpen, onClose }: ServerAuthDialogPr
 
 	useEffect(() => {
 		if (isOpen) {
+			hasBeenPresentedRef.current = true
 			hasAuthSucceeded.current = false
 			ref.current?.present()
-		} else {
+		} else if (hasBeenPresentedRef.current) {
 			ref.current?.dismiss()
 		}
 	}, [isOpen])
@@ -202,9 +204,9 @@ export default function ServerAuthDialog({ isOpen, onClose }: ServerAuthDialogPr
 						{oidcConfig?.enabled && (
 							<>
 								<View className="flex-row items-center">
-									<View className="flex-1 border-t border-edge" />
+									<View className="border-edge flex-1 border-t" />
 									<Text className="mx-2 text-sm text-foreground-muted">Or</Text>
-									<View className="flex-1 border-t border-edge" />
+									<View className="border-edge flex-1 border-t" />
 								</View>
 
 								<Button

@@ -17,8 +17,7 @@ use models::{
 	},
 };
 use sea_orm::{
-	prelude::*, sea_query::Query, DatabaseBackend, FromQueryResult, QueryOrder,
-	QuerySelect, QueryTrait, Statement,
+	prelude::*, sea_query::Query, FromQueryResult, QueryOrder, QuerySelect, QueryTrait,
 };
 
 use crate::{
@@ -26,6 +25,7 @@ use crate::{
 	guard::PermissionGuard,
 	loader::favorite::{FavoriteLibraryLoaderKey, FavoritesLoader},
 	object::{library_scan_record::LibraryScanRecord, media::Media, stats::LibraryStats},
+	utils::db_statement,
 };
 
 use super::{
@@ -199,8 +199,8 @@ impl Library {
 		let conn = ctx.data::<CoreContext>()?.conn.as_ref();
 
 		let query_result = conn
-			.query_all(Statement::from_sql_and_values(
-				DatabaseBackend::Sqlite,
+			.query_all(db_statement(
+				conn,
 				r"
 				SELECT
 					substr(COALESCE(media_metadata.title, media.name), 1, 1) AS letter,
@@ -273,8 +273,8 @@ impl Library {
 		let conn = ctx.data::<CoreContext>()?.conn.as_ref();
 
 		let query_result = conn
-			.query_all(Statement::from_sql_and_values(
-				DatabaseBackend::Sqlite,
+			.query_all(db_statement(
+				conn,
 				r"
 				SELECT
 					substr(COALESCE(series_metadata.title, series.name), 1, 1) AS letter,
@@ -383,6 +383,7 @@ impl Library {
 	/// qualified URL to the image.
 	async fn thumbnail(&self, ctx: &Context<'_>) -> Result<ImageRef> {
 		let service = ctx.data::<ServiceContext>()?;
+		let last_modified = self.model.updated_at;
 
 		let dimensions = self
 			.model
@@ -392,11 +393,14 @@ impl Library {
 			.map(|dim| (dim.width, dim.height));
 
 		Ok(ImageRef {
-			url: service
-				.format_url(format!("/api/v2/library/{}/thumbnail", self.model.id)),
+			url: service.cache_friendly_url(
+				format!("/api/v2/library/{}/thumbnail", self.model.id),
+				&last_modified,
+			),
 			height: dimensions.map(|(_, height)| height),
 			width: dimensions.map(|(width, _)| width),
 			metadata: self.model.thumbnail_meta.clone(),
+			last_modified,
 		})
 	}
 }

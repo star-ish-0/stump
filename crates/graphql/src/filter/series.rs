@@ -1,8 +1,6 @@
 use async_graphql::InputObject;
 use models::{
-	entity::{
-		finished_reading_session, library, library_config, media, reading_session, series,
-	},
+	entity::{library, library_config, media, reading_session, series},
 	shared::enums::{LibraryType, ReadingStatus},
 };
 use sea_orm::{
@@ -36,6 +34,8 @@ pub struct SeriesFilterInput {
 	pub reading_status: Option<ConceptualFilter<ReadingStatus>>,
 	#[graphql(default)]
 	pub library_type: Option<ConceptualFilter<LibraryType>>,
+	#[graphql(default)]
+	pub is_oneshot: Option<bool>,
 
 	#[graphql(default)]
 	pub metadata: Option<SeriesMetadataFilterInput>,
@@ -53,12 +53,16 @@ pub struct SeriesFilterInput {
 /// Returns a subquery for series ids where at least one book in the series has an active reading session for the user,
 /// i.e. the user has _some_ reading activity
 fn reading_series_subquery(user_id: &str) -> SelectStatement {
-	// select distinct media_id from reading_session where user_id = ?
+	let newer_exists = reading_session::Entity::newer_session_exists_subquery();
+
+	// select distinct media_id from reading_session where user_id = ? and status = 'READING'
 	let active_media_ids = Query::select()
 		.distinct()
 		.column(reading_session::Column::MediaId)
 		.from(reading_session::Entity)
 		.and_where(reading_session::Column::UserId.eq(user_id))
+		.and_where(reading_session::Column::Status.eq(ReadingStatus::Reading))
+		.and_where(Expr::expr(Expr::exists(newer_exists)).not())
 		.to_owned();
 
 	// select distinct series_id from media where series_id is not null and id in (active_media_ids)
@@ -74,12 +78,16 @@ fn reading_series_subquery(user_id: &str) -> SelectStatement {
 /// Returns a subquery for series ids where all books in the series have at least one
 /// finished reading session for the user
 fn finished_series_subquery(user_id: &str) -> SelectStatement {
-	// select distinct media_id from finished_reading_session where user_id = ?
+	let newer_exists = reading_session::Entity::newer_session_exists_subquery();
+
+	// select distinct media_id from reading_session where user_id = ? and status = 'FINISHED'
 	let finished_media_ids = Query::select()
 		.distinct()
-		.column(finished_reading_session::Column::MediaId)
-		.from(finished_reading_session::Entity)
-		.and_where(finished_reading_session::Column::UserId.eq(user_id))
+		.column(reading_session::Column::MediaId)
+		.from(reading_session::Entity)
+		.and_where(reading_session::Column::UserId.eq(user_id))
+		.and_where(reading_session::Column::Status.eq(ReadingStatus::Finished))
+		.and_where(Expr::expr(Expr::exists(newer_exists)).not())
 		.to_owned();
 
 	// select distinct series_id from media where series_id is not null and id not in (finished_media_ids)
@@ -264,6 +272,7 @@ impl SeriesFilterInput {
 				self.library_id
 					.map(|f| apply_string_filter(series::Column::LibraryId, f)),
 			)
+			.add_option(self.is_oneshot.map(|f| series::Column::IsOneshot.eq(f)))
 			.add_option(self.library_type.map(apply_library_type_filter))
 			.add_option(self.metadata.map(|f| f.into_filter()))
 			.add_option(self.library.map(|f| f.into_filter()))

@@ -1,10 +1,10 @@
 import { createContext, useContext } from 'react'
 
-import { Timer } from '~/stores/reader'
+import { Timer } from '~/lib/hooks'
 
 export type IPdfReaderContext = {
 	serverId: string
-	timer?: Timer
+	timer: Timer
 }
 
 export const PdfReaderContext = createContext<IPdfReaderContext | null>(null)

@@ -5,18 +5,17 @@ use async_graphql::{
 };
 
 use models::{
-	entity::{
-		finished_reading_session, library, media, reading_session, series, series_tag,
-		tag,
-	},
+	entity::{library, media, media_metadata, reading_session, series, series_tag, tag},
 	shared::{
 		alphabet::{AvailableAlphabet, EntityLetter},
+		enums::ReadingStatus,
 		image::ImageRef,
 	},
 };
 use sea_orm::{
-	prelude::*, sea_query::Query, Condition, DatabaseBackend, FromQueryResult, JoinType,
-	QueryOrder, QuerySelect, QueryTrait, Statement,
+	prelude::*,
+	sea_query::{Expr, Query},
+	Condition, FromQueryResult, JoinType, QueryOrder, QuerySelect, QueryTrait,
 };
 
 use crate::{
@@ -27,6 +26,7 @@ use crate::{
 		series_finished_count::{FinishedCountLoaderKey, SeriesFinishedCountLoader},
 	},
 	object::{series_metadata::SeriesMetadata, stats::SeriesStats},
+	utils::db_statement,
 };
 
 use super::{library::Library, media::Media, tag::Tag};
@@ -91,6 +91,23 @@ impl Series {
 		Ok(Library::from(model))
 	}
 
+	async fn oneshot_book(&self, ctx: &Context<'_>) -> Result<Option<Media>> {
+		if !self.model.is_oneshot {
+			return Ok(None);
+		}
+
+		let conn = ctx.data::<CoreContext>()?.conn.as_ref();
+
+		let model = media::ModelWithMetadata::find()
+			.filter(media::Column::SeriesId.eq(self.model.id.clone()))
+			.filter(media::Column::IsOneshot.eq(true))
+			.into_model::<media::ModelWithMetadata>()
+			.one(conn)
+			.await?;
+
+		Ok(model.map(Media::from))
+	}
+
 	// TODO(perf): We probably could put this behind a dataloader if used frequently
 	/// Get media in this series
 	async fn media(
@@ -127,8 +144,8 @@ impl Series {
 		let conn = ctx.data::<CoreContext>()?.conn.as_ref();
 
 		let query_result = conn
-			.query_all(Statement::from_sql_and_values(
-				DatabaseBackend::Sqlite,
+			.query_all(db_statement(
+				conn,
 				r"
 				SELECT
 					substr(COALESCE(media_metadata.title, media.name), 1, 1) AS letter,
@@ -167,6 +184,8 @@ impl Series {
 		let conn = ctx.data::<CoreContext>()?.conn.as_ref();
 
 		let user_id = user.id.clone();
+		let newer_exists = reading_session::Entity::newer_session_exists_subquery();
+		let latest_only = Expr::expr(Expr::exists(newer_exists)).not();
 
 		let name_cmp = if let Some(id) = cursor {
 			let media = media::Entity::find_for_user(user)
@@ -183,16 +202,14 @@ impl Series {
 		};
 
 		let query = media::ModelWithMetadata::find_for_user(user)
-			.left_join(reading_session::Entity)
 			.join_rev(
 				JoinType::LeftJoin,
-				finished_reading_session::Entity::belongs_to(media::Entity)
-					.from(finished_reading_session::Column::MediaId)
+				reading_session::Entity::belongs_to(media::Entity)
+					.from(reading_session::Column::MediaId)
 					.to(media::Column::Id)
 					.on_condition(move |_left, _right| {
-						Condition::all().add(
-							finished_reading_session::Column::UserId.eq(user_id.clone()),
-						)
+						Condition::all()
+							.add(reading_session::Column::UserId.eq(user_id.clone()))
 					})
 					.into(),
 			)
@@ -200,30 +217,20 @@ impl Series {
 			// We only want to consider media that the user hasn't started or is in progress
 			.filter(
 				Condition::any()
+					// not started
 					.add(reading_session::Column::Id.is_null())
+					// in progress (latest is reading + no newer sessions)
 					.add(
 						Condition::all()
-							.add(reading_session::Column::UserId.eq(&user.id))
 							.add(
-								Condition::any()
-									.add(reading_session::Column::Epubcfi.is_not_null())
-									.add(
-										reading_session::Column::PercentageCompleted
-											.lt(1.0),
-									)
-									.add(
-										Condition::all()
-											.add(
-												reading_session::Column::Page
-													.is_not_null(),
-											)
-											.add(reading_session::Column::Page.gt(0)),
-									),
-							),
+								reading_session::Column::Status
+									.eq(ReadingStatus::Reading),
+							)
+							.add(latest_only.clone()),
 					),
 			)
-			// If the book is finshed, we don't even want to consider it
-			.filter(finished_reading_session::Column::Id.is_null());
+			.group_by(media::Column::Id)
+			.group_by(media_metadata::Column::Id); // pgsql requires addtl grouping
 
 		let books = if let Some(name) = name_cmp {
 			let mut cursor = query.cursor_by(media::Column::Name);
@@ -324,6 +331,7 @@ impl Series {
 	/// qualified URL to the image.
 	async fn thumbnail(&self, ctx: &Context<'_>) -> Result<ImageRef> {
 		let service = ctx.data::<ServiceContext>()?;
+		let last_modified = self.model.updated_at;
 
 		let dimensions = self
 			.model
@@ -333,11 +341,14 @@ impl Series {
 			.map(|dim| (dim.width, dim.height));
 
 		Ok(ImageRef {
-			url: service
-				.format_url(format!("/api/v2/series/{}/thumbnail", self.model.id)),
+			url: service.cache_friendly_url(
+				format!("/api/v2/series/{}/thumbnail", self.model.id),
+				&last_modified,
+			),
 			height: dimensions.as_ref().map(|dim| dim.1),
 			width: dimensions.as_ref().map(|dim| dim.0),
 			metadata: self.model.thumbnail_meta.clone(),
+			last_modified,
 		})
 	}
 

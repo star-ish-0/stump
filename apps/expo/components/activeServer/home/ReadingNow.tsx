@@ -1,4 +1,5 @@
 import { useSDK } from '@stump/client'
+import { parseGraphQLPercentageDecimal } from '@stump/client'
 import {
 	FragmentType,
 	graphql,
@@ -21,12 +22,10 @@ import { stripHtml } from 'string-strip-html'
 import { ThumbnailImage } from '~/components/image'
 import { Badge, Heading, Progress, Text } from '~/components/ui'
 import { COLORS, useColors } from '~/lib/constants'
-import { parseGraphQLPercentageDecimal } from '~/lib/format'
-import { useDisplay } from '~/lib/hooks'
+import { useDisplay, useTranslate } from '~/lib/hooks'
 import { cn } from '~/lib/utils'
+import { useActiveServer } from '~/providers/ActiveServerProvider'
 import { usePreferencesStore } from '~/stores'
-
-import { useActiveServer } from '../context'
 
 const fragment = graphql(`
 	fragment ReadingNow on Media {
@@ -54,7 +53,6 @@ const fragment = graphql(`
 		}
 		pages
 		readProgress {
-			epubcfi
 			page
 			percentageCompleted
 			updatedAt
@@ -194,6 +192,7 @@ function ReadingNowItem({ book }: ReadingNowItemProps) {
 		activeServer: { id: serverID },
 	} = useActiveServer()
 	const { sdk } = useSDK()
+	const { t } = useTranslate()
 	const { width, isTablet } = useDisplay()
 
 	const router = useRouter()
@@ -226,7 +225,7 @@ function ReadingNowItem({ book }: ReadingNowItemProps) {
 		const filterString = JSON.stringify(filter)
 		router.push({
 			// @ts-expect-error: String path
-			pathname: `/server/${serverID}/books?initialFilters=${filterString}`,
+			pathname: `/stump/${serverID}/books?initialFilters=${filterString}`,
 		})
 	}
 
@@ -341,7 +340,7 @@ function ReadingNowItem({ book }: ReadingNowItemProps) {
 
 	return (
 		<View className="gap-4 flex flex-row">
-			<Pressable onPress={() => router.navigate(`/server/${serverID}/books/${data.id}`)}>
+			<Pressable onPress={() => router.navigate(`/stump/${serverID}/books/${data.id}`)}>
 				<BlurTargetView ref={blurTargetRef}>
 					<ThumbnailImage
 						source={{
@@ -383,7 +382,7 @@ function ReadingNowItem({ book }: ReadingNowItemProps) {
 									opacity: 0.9,
 								}}
 							>
-								Page {currentPage} of {data.pages}
+								{t('common.pageXOfY', { current: currentPage, total: data.pages })}
 							</Text>
 
 							<Text

@@ -18,6 +18,7 @@ import {
 	useLocalLibraryMenu,
 } from '~/components/localLibrary'
 import { useDownloadsState } from '~/components/localLibrary/store'
+import { SyncConflictsSheet } from '~/components/localLibrary/syncConflicts'
 import { Text } from '~/components/ui'
 import { db, downloadedFiles, libraryRefs, readProgress, seriesRefs } from '~/db'
 import { useTranslate } from '~/lib/hooks'
@@ -161,11 +162,12 @@ export default function Screen() {
 				paddingVertical: 16,
 			}}
 			contentInsetAdjustmentBehavior="always"
-			ItemSeparatorComponent={() => <View className="h-6" />}
+			ItemSeparatorComponent={() => <View className="h-4" />}
 			ListHeaderComponent={
 				<>
 					<ListHeaderComponent isEmptyState={data?.length === 0} />
 					<DownloadProblemsSheet />
+					<SyncConflictsSheet />
 				</>
 			}
 			ListEmptyComponent={<NoDownloadsOnDevice source={sourceFilter} />}

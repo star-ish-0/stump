@@ -12,10 +12,15 @@ mod context;
 pub mod database;
 pub mod error;
 mod event;
-pub mod filesystem;
+pub mod fs_utils;
+pub mod image;
 pub mod job;
 pub mod kobo;
+pub mod media;
+pub mod metadata;
 pub mod opds;
+pub mod readium;
+pub mod scan;
 pub mod utils;
 
 use config::logging::STUMP_SHADOW_TEXT;
@@ -71,6 +76,11 @@ pub struct StumpCore {
 }
 
 impl StumpCore {
+	/// Creates a [StumpCore] from an existing [Ctx]
+	pub fn from_ctx(ctx: Ctx) -> StumpCore {
+		StumpCore { ctx }
+	}
+
 	/// Creates a new instance of [`StumpCore`] and returns it wrapped in an [`std::sync::Arc`].
 	pub async fn new(config: StumpConfig) -> StumpCore {
 		let core_ctx = Ctx::new(config).await;
@@ -89,19 +99,12 @@ impl StumpCore {
 	///
 	/// Returns the configuration variables in a `StumpConfig` struct.
 	pub fn init_config(config_dir: String) -> CoreResult<StumpConfig> {
-		let mut config = StumpConfig::new(config_dir)
-			// Load config file (if any)
-			.with_config_file()?
-			// Overlay environment variables
-			.with_environment()?;
+		let config = StumpConfig::load(config_dir)?;
 
-		// TODO: I couldn't get this fully working inside the macro but would like to revisit
-		if let Some(env_oidc) = config::OidcConfig::from_env() {
-			config.oidc = Some(env_oidc);
+		if let Err(error) = config.write_config() {
+			eprintln!("Failed to write Stump.toml: {error}");
+			// ^ config init before tracing init
 		}
-
-		// Write ensure that config directory exists and write Stump.toml
-		config.write_config_dir()?;
 
 		Ok(config)
 	}
@@ -230,6 +233,11 @@ impl StumpCore {
 	pub async fn init_journal_mode(&self) -> Result<JournalModeChanged, CoreError> {
 		let conn = self.ctx.conn.as_ref();
 
+		if conn.get_database_backend() != DatabaseBackend::Sqlite {
+			tracing::trace!("Not using SQLite, skipping journal mode initialization");
+			return Ok(false);
+		}
+
 		let wal_mode_setup_completed = server_config::Entity::find()
 			.filter(server_config::Column::InitialWalSetupComplete.eq(true))
 			.count(conn)
@@ -283,10 +291,10 @@ impl StumpCore {
 		}
 	}
 
-	pub async fn init_scheduler(&self) -> Result<Arc<JobScheduler>, CoreError> {
+	pub async fn init_scheduler(&self) -> Result<JobScheduler, CoreError> {
 		let ctx = self.ctx.arced();
 		let scheduler = JobScheduler::init(ctx).await?;
-		Ok(Arc::new(scheduler))
+		Ok(scheduler)
 	}
 
 	pub async fn init_library_watcher(&self) -> CoreResult<()> {

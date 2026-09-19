@@ -8,7 +8,6 @@ import { useKeepAwake } from 'expo-keep-awake'
 import * as NavigationBar from 'expo-navigation-bar'
 import { useLocalSearchParams } from 'expo-router'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { match, P } from 'ts-pattern'
 import urlJoin from 'url-join'
 
 import { ImageBasedReader, PdfReader, ReadiumReader } from '~/components/book/reader'
@@ -33,11 +32,15 @@ import {
 	toAbsolutePath,
 	unpackedBookDirectory,
 } from '~/lib/filesystem'
-import { useLocalAnnotationMutations, useLocalBookmarkMutations } from '~/lib/hooks'
+import {
+	useLocalAnnotationMutations,
+	useLocalBookmarkMutations,
+	useReadingTimer,
+} from '~/lib/hooks'
 import type { ReadiumLocator } from '~/modules/readium'
 import { intoReadiumLocator } from '~/modules/readium'
 import StumpStreamer from '~/modules/streamer'
-import { useBookPreferences, useBookTimer, useReaderStore } from '~/stores/reader'
+import { useBookPreferences, useReaderStore } from '~/stores/reader'
 
 type Params = {
 	fileId: string
@@ -174,11 +177,36 @@ function Reader({ record, bookmarks, annotations }: ReaderProps) {
 	const {
 		preferences: { trackElapsedTime },
 	} = useBookPreferences({ book, serverId: downloadedFile.serverId })
-	const showControls = useReaderStore((state) => state.showControls)
 
-	const timer = useBookTimer(book?.id || '', {
-		initial: book?.readProgress?.elapsedSeconds,
-		enabled: trackElapsedTime && !showControls,
+	const timer = useReadingTimer({
+		databaseSeconds: book?.readProgress?.elapsedSeconds,
+		enabled: trackElapsedTime,
+	})
+
+	const { mutate: resetElapsedSeconds } = useMutation({
+		retry: (attempts) => attempts < 3,
+		onError: (error) => {
+			console.error('Failed to reset reading time:', error)
+		},
+		mutationFn: async ({ bookId, serverId }: { bookId: string; serverId: string }) => {
+			await db
+				.insert(readProgress)
+				.values({
+					bookId,
+					elapsedSeconds: 0,
+					lastModified: new Date(),
+					serverId,
+				})
+				.onConflictDoUpdate({
+					target: readProgress.bookId,
+					set: {
+						elapsedSeconds: 0,
+						lastModified: new Date(),
+						syncStatus: syncStatus.enum.UNSYNCED,
+						pendingReset: true,
+					},
+				})
+		},
 	})
 
 	const { mutate: updatePagedProgress } = useMutation({
@@ -189,15 +217,19 @@ function Reader({ record, bookmarks, annotations }: ReaderProps) {
 		mutationFn: async ({
 			bookId,
 			serverId,
+			totalPages,
 			...input
-		}: PagedProgressInput & { bookId: string; serverId: string }) => {
-			const totalSeconds = timer.getCurrentTime()
+		}: PagedProgressInput & { bookId: string; serverId: string; totalPages: number }) => {
+			timer.popDeltaSeconds()
+			const totalSeconds = timer.getTotalSeconds()
+			const percentage = totalPages > 0 ? (input.page / totalPages).toString() : null
 
 			const result = await db
 				.insert(readProgress)
 				.values({
 					bookId,
 					page: input.page,
+					percentage,
 					elapsedSeconds: totalSeconds,
 					lastModified: new Date(),
 					serverId,
@@ -206,6 +238,7 @@ function Reader({ record, bookmarks, annotations }: ReaderProps) {
 					target: readProgress.bookId,
 					set: {
 						page: input.page,
+						percentage,
 						elapsedSeconds: totalSeconds,
 						lastModified: new Date(),
 						syncStatus: syncStatus.enum.UNSYNCED,
@@ -219,10 +252,20 @@ function Reader({ record, bookmarks, annotations }: ReaderProps) {
 
 	const onPageChanged = useCallback(
 		(page: number) => {
-			updatePagedProgress({ bookId: book.id, serverId: downloadedFile.serverId, page })
+			updatePagedProgress({
+				bookId: book.id,
+				serverId: downloadedFile.serverId,
+				page,
+				totalPages: book.pages,
+			})
 		},
-		[book.id, downloadedFile.serverId, updatePagedProgress],
+		[book.id, book.pages, downloadedFile.serverId, updatePagedProgress],
 	)
+
+	const resetTimer = useCallback(() => {
+		resetElapsedSeconds({ bookId: book.id, serverId: downloadedFile.serverId })
+		timer.clearTotalSeconds()
+	}, [book.id, downloadedFile.serverId, resetElapsedSeconds, timer])
 
 	const { mutate: updateEbookProgress } = useMutation({
 		retry: (attempts) => attempts < 3,
@@ -235,7 +278,8 @@ function Reader({ record, bookmarks, annotations }: ReaderProps) {
 			percentage,
 			...epubProgress
 		}: ReadiumLocator & { bookId: string; serverId: string; percentage: number }) => {
-			const totalSeconds = timer.getCurrentTime()
+			timer.popDeltaSeconds()
+			const totalSeconds = timer.getTotalSeconds()
 
 			const result = await db
 				.insert(readProgress)
@@ -325,6 +369,7 @@ function Reader({ record, bookmarks, annotations }: ReaderProps) {
 		return (
 			<ReadiumReader
 				book={book}
+				timer={timer}
 				initialLocator={initialLocator ? intoReadiumLocator(initialLocator) : undefined}
 				onLocationChanged={onLocationChanged}
 				onReachedEnd={onReachedEnd}
@@ -351,6 +396,7 @@ function Reader({ record, bookmarks, annotations }: ReaderProps) {
 				pageURL={pageURL}
 				onPageChanged={onPageChanged}
 				timer={timer}
+				resetTimer={resetTimer}
 				serverId={downloadedFile.serverId}
 			/>
 		)
@@ -383,45 +429,32 @@ const buildBook = (
 
 	const extension = downloadedFile.filename.split('.').pop() || ''
 
-	const readProgress: ImageReaderBookRef['readProgress'] | undefined = match(unsyncedProgress)
-		.with(
-			{ page: P.number },
-			(progress) =>
-				({
-					__typename: 'ActiveReadingSession' as const,
-					page: progress.page,
-					elapsedSeconds: progress.elapsedSeconds,
-					percentageCompleted: progress.percentage,
-				}) satisfies ImageReaderBookRef['readProgress'],
-		)
-		.with(
-			{
-				epubProgress: P.not(P.nullish),
-			},
-			(progress) => {
-				const parsedData = epubProgress.safeParse(progress.epubProgress)
-				if (!parsedData.success) {
-					return undefined
-				}
-				const epubData = parsedData.data
+	let readProgress: ImageReaderBookRef['readProgress'] | undefined = unsyncedProgress
+		? {
+				__typename: 'ResumeReadingCursor',
+				page: unsyncedProgress.page,
+				elapsedSeconds: unsyncedProgress.elapsedSeconds ?? 0,
+				percentageCompleted: unsyncedProgress.percentage,
+			}
+		: undefined
 
-				return {
-					__typename: 'ActiveReadingSession' as const,
-					locator: {
-						__typename: 'ReadiumLocator',
-						...epubData,
-					},
-					elapsedSeconds: progress.elapsedSeconds,
-					percentageCompleted: progress.percentage,
-				} satisfies ImageReaderBookRef['readProgress']
+	const epubData = unsyncedProgress?.epubProgress
+		? epubProgress.safeParse(unsyncedProgress.epubProgress)
+		: null
+
+	if (epubData?.success && readProgress) {
+		readProgress = {
+			...readProgress,
+			locator: {
+				__typename: 'ReadiumLocator',
+				...epubData.data,
 			},
-		)
-		.otherwise(() => undefined)
+		}
+	}
 
 	const bookmarks = bookmarkRecords.map((b) => ({
 		__typename: 'Bookmark' as const,
 		id: String(b.id),
-		epubcfi: b.epubcfi,
 		mediaId: b.bookId,
 		previewContent: b.previewContent,
 		locator: {
