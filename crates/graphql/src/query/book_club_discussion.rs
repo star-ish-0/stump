@@ -4,7 +4,8 @@ use models::entity::{
 	book_club_member, user::AuthUser,
 };
 use sea_orm::{
-	prelude::*, sea_query::Query, ColumnTrait, QueryFilter, QueryOrder, QuerySelect,
+	prelude::*, sea_query::Query, ColumnTrait, ExprTrait, QueryFilter, QueryOrder,
+	QuerySelect,
 };
 
 use crate::{
@@ -160,7 +161,7 @@ impl BookClubDiscussionQuery {
 			.order_by_desc(book_club_discussion_message::Column::IsPinnedMessage)
 			.order_by_desc(book_club_discussion_message::Column::Timestamp);
 
-		let limit = pagination.limit.min(100);
+		let limit = Ord::min(pagination.limit, 100);
 		// Note: In other areas I do more compelx cursoring but since this is a dual order by
 		// this should be fine for now. TODO: Revisit this in future
 		if let Some(after) = &pagination.after {
@@ -197,7 +198,10 @@ impl BookClubDiscussionQuery {
 		ctx: &Context<'_>,
 		book_club_id: ID,
 	) -> Result<Vec<BookClubDiscussion>> {
+		let AuthContext { user, .. } = ctx.data::<AuthContext>()?;
 		let conn = ctx.data::<CoreContext>()?.conn.as_ref();
+
+		verify_read_access(book_club_id.as_ref(), user, conn).await?;
 
 		let current_book_position =
 			match book_club_book::Entity::get_current_or_next_position(

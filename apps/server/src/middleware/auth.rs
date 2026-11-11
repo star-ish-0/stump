@@ -23,7 +23,7 @@ use models::{
 };
 use prefixed_api_key::{PrefixedApiKey, PrefixedApiKeyController};
 use reqwest::Method;
-use sea_orm::{prelude::*, Condition, DatabaseConnection};
+use sea_orm::{prelude::*, Condition, DatabaseConnection, ExprTrait};
 use serde::Deserialize;
 use stump_core::opds::v2_0::{
 	authentication::{
@@ -284,10 +284,13 @@ pub async fn validate_api_key(
 
 	let constructed_user = match api_key_permissions {
 		APIKeyPermissions::Inherit(_) => AuthUser::from(user),
+		// TODO(permissions): server owner going away
 		// Note: we don't construct permission sets for inferred permissions. What you
-		// give to your API key is what it gets.
+		// give to your API key is what it gets, however the server owner flag
+		// will be set to false always.
 		APIKeyPermissions::Custom(permissions) => AuthUser {
 			permissions,
+			is_server_owner: false,
 			..AuthUser::from(user)
 		},
 	};

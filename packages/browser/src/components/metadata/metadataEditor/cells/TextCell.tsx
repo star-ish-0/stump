@@ -3,6 +3,7 @@ import { Minus } from 'lucide-react'
 import { useFormContext } from 'react-hook-form'
 
 import { MarkdownText } from '@/components/markdown'
+import { useTranslate } from '@/hooks/useTranslate'
 
 import { useMetadataEditorContext } from '../context'
 
@@ -20,6 +21,7 @@ export default function TextCell<Field extends string>({
 	isMonoText,
 }: Props<Field>) {
 	const form = useFormContext()
+	const { t } = useTranslate()
 
 	const { isEditing, isFieldLocked } = useMetadataEditorContext()
 
@@ -39,12 +41,12 @@ export default function TextCell<Field extends string>({
 					{...form.register(binding)}
 				/>
 
-				<ToolTip content="Reset field">
+				<ToolTip content={t('metadataEditor.actions.resetField')}>
 					<Button
 						variant="destructive"
 						size="icon"
 						className="h-4 w-4 opacity-0 transition-opacity duration-200 group-hover:opacity-100"
-						aria-label="Reset field"
+						aria-label={t('metadataEditor.actions.resetField')}
 						// @ts-expect-error: Null is fine to reset it here. form.resetField didn't quite work as expected
 						onClick={() => form.setValue(binding, null)}
 					>

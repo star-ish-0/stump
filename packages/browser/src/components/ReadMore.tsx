@@ -1,4 +1,7 @@
-import { cn, useBoolean } from '@stump/components'
+import { cn, SheetPrimitive as Sheet, useBoolean } from '@stump/components'
+import { memo, useId, useMemo } from 'react'
+
+import { useTranslate } from '@/hooks/useTranslate'
 
 import { DEBUG_ENV } from '../index.ts'
 import Markdown from './markdown/MarkdownPreview.tsx'
@@ -6,52 +9,95 @@ import Markdown from './markdown/MarkdownPreview.tsx'
 type Props = {
 	text?: string | null
 	muted?: boolean
+	/**
+	 * - `inline` expands in place (pushes content, so not always my preference)
+	 * - `sheet` opens the full text in a side sheet
+	 *
+	 * there are valid uses for both, e.g. if already in sheet i won't spawn another (at
+	 * least not for web)
+	 */
+	variant?: 'inline' | 'sheet'
+	/** the title of the sheet, if variant is `sheet` */
+	sheetTitle?: string
 }
 
 const COLLAPSED_HEIGHT = 72
-const MAX_EXPANDED_HEIGHT = 300
 
-export default function ReadMore({ text, muted }: Props) {
-	const [showingAll, { toggle }] = useBoolean(false)
+// Memoized so toggling expanded/collapsed doesn't re-parse (and visibly
+// re-render/flicker) potentially large markdown descriptions.
+const MemoizedMarkdown = memo(Markdown)
+
+export default function ReadMore({ text, muted, variant = 'inline', sheetTitle }: Props) {
+	const { translate } = useTranslate()
+	const [showingAll, { toggle, on: open, off: close }] = useBoolean(false)
+	const contentId = useId()
 
 	const resolvedText = text ? text : DEBUG_ENV ? DEBUG_FAKE_TEXT : ''
 	const canReadMore = resolvedText.length > 250
+	const markdownClassName = useMemo(() => cn({ 'opacity-80': muted }), [muted])
+
+	const content = useMemo(
+		() => <MemoizedMarkdown className={markdownClassName}>{resolvedText}</MemoizedMarkdown>,
+		[markdownClassName, resolvedText],
+	)
 
 	if (!resolvedText && !DEBUG_ENV) {
 		return null
 	}
 
 	if (!canReadMore) {
-		return <Markdown className={cn({ 'opacity-80': muted })}>{resolvedText}</Markdown>
+		return content
 	}
+
+	const isExpandedInline = variant === 'inline' && showingAll
 
 	return (
 		<div>
 			<div
-				className={showingAll ? 'overflow-y-auto' : 'overflow-hidden'}
-				style={{
-					maxHeight: showingAll ? MAX_EXPANDED_HEIGHT : COLLAPSED_HEIGHT,
-					transition: 'max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-				}}
+				id={contentId}
+				className={cn(!isExpandedInline && 'overflow-hidden')}
+				style={
+					isExpandedInline
+						? { overflowAnchor: 'none' }
+						: { maxHeight: COLLAPSED_HEIGHT, overflowAnchor: 'none' }
+				}
 			>
-				<Markdown className={cn({ 'opacity-80': muted })}>{resolvedText}</Markdown>
+				{content}
 			</div>
 
-			<div
-				className="-mt-8 h-8 pointer-events-none bg-linear-to-t from-background to-transparent transition-opacity duration-150"
-				style={{ opacity: showingAll ? 0 : 1 }}
-			/>
+			{!isExpandedInline && (
+				<div
+					aria-hidden
+					className="-mt-8 h-8 pointer-events-none bg-linear-to-t from-background to-transparent"
+				/>
+			)}
 
 			<div className="mt-2 relative flex w-full items-center">
 				<div className="flex-1 border-t border-dashed border-border" />
 				<button
+					type="button"
 					onClick={toggle}
+					aria-expanded={showingAll}
+					aria-controls={variant === 'inline' ? contentId : undefined}
 					className="px-3 py-0.5 text-xs font-medium cursor-pointer rounded-full border border-dashed border-border bg-background text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
 				>
-					{showingAll ? 'Read less' : 'Read more'}
+					{isExpandedInline
+						? translate('shared.common.readLess')
+						: translate('shared.common.readMore')}
 				</button>
 				<div className="flex-1 border-t border-dashed border-border" />
 			</div>
+
+			{variant === 'sheet' && (
+				<Sheet open={showingAll} onOpenChange={(isOpen) => (isOpen ? open() : close())}>
+					<Sheet.Content className="overflow-y-auto" closeIcon size="lg">
+						<Sheet.Header>
+							<Sheet.Title className="pr-8">{sheetTitle}</Sheet.Title>
+						</Sheet.Header>
+						<div className="px-4 pb-6 text-sm">{content}</div>
+					</Sheet.Content>
+				</Sheet>
+			)}
 		</div>
 	)
 }

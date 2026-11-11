@@ -1,5 +1,7 @@
-import { Badge, Button, cn } from '@stump/components'
+import { Badge, cn, ToolTip } from '@stump/components'
 import { Minus } from 'lucide-react'
+
+import { useTranslate } from '@/hooks/useTranslate'
 
 import AddFieldsDialog from '../AddFieldsDialog'
 
@@ -11,6 +13,7 @@ type Props = {
 }
 
 export default function InlineBadgeListInput({ values, onChange, className, binding }: Props) {
+	const { t } = useTranslate()
 	const onRemove = (index: number) => {
 		onChange(values.filter((_, i) => i !== index))
 	}
@@ -21,23 +24,24 @@ export default function InlineBadgeListInput({ values, onChange, className, bind
 
 	const renderBadge = (value: string, index: number) => {
 		return (
-			<div key={`${value}-${index}`} className="group relative">
-				<Badge>{value}</Badge>
-				<Button
-					variant="destructive"
-					size="icon"
-					className="-right-2 -top-2 h-4 w-4 absolute z-10 opacity-0 transition-opacity group-hover:opacity-100"
-					aria-label="Remove item"
-					onClick={() => onRemove(index)}
-				>
-					<Minus className="h-3 w-3" />
-				</Button>
-			</div>
+			<Badge key={`${value}-${index}`} className="pr-1">
+				{value}
+				<ToolTip content={t('metadataEditor.actions.removeItem')}>
+					<button
+						type="button"
+						aria-label={t('metadataEditor.actions.removeItem')}
+						onClick={() => onRemove(index)}
+						className="h-4 w-4 inline-flex shrink-0 cursor-pointer items-center justify-center rounded-full opacity-70 hover:opacity-100"
+					>
+						<Minus className="h-3 w-3" />
+					</button>
+				</ToolTip>
+			</Badge>
 		)
 	}
 
 	return (
-		<div className={cn('gap-1 flex h-full flex-wrap items-center', className)}>
+		<div className={cn('gap-1.5 flex h-full flex-wrap items-center', className)}>
 			{values.map(renderBadge)}
 			<AddFieldsDialog binding={binding} onSave={onAppendValues} />
 		</div>

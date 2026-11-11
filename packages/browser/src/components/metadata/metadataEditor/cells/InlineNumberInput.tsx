@@ -1,6 +1,8 @@
 import { Button, cn, Input, ToolTip } from '@stump/components'
 import { Minus } from 'lucide-react'
 
+import { useTranslate } from '@/hooks/useTranslate'
+
 import type { NumberValidation } from '../../fieldDefs'
 
 type Props = {
@@ -18,6 +20,7 @@ export default function InlineNumberInput({
 	validation,
 	className,
 }: Props) {
+	const { t } = useTranslate()
 	return (
 		<div className={cn(`group gap-2 flex items-center`, className)}>
 			<Input
@@ -35,12 +38,12 @@ export default function InlineNumberInput({
 				}}
 			/>
 
-			<ToolTip content="Reset field">
+			<ToolTip content={t('metadataEditor.actions.resetField')}>
 				<Button
 					variant="destructive"
 					size="icon"
 					className="h-4 w-4 opacity-0 transition-opacity duration-200 group-hover:opacity-100"
-					aria-label="Reset field"
+					aria-label={t('metadataEditor.actions.resetField')}
 					onClick={() => onChange(null)}
 				>
 					<Minus className="h-3 w-3" />

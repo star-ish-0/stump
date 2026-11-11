@@ -31,7 +31,7 @@ export default function AndroidOfflineBookMenu({
 	progression,
 }: Props) {
 	const insets = useSafeAreaInsets()
-	const { t } = useTranslate()
+	const { translate } = useTranslate()
 
 	const contentInsets = {
 		top: insets.top,
@@ -60,11 +60,11 @@ export default function AndroidOfflineBookMenu({
 					{!progression.isCompleted && (
 						<Fragment>
 							<DropdownMenuItem onPress={handleMarkAsComplete}>
-								<Text className="text-lg">{t('bookActions.markAsRead.label')}</Text>
+								<Text className="text-lg">{translate('shared.bookActions.markAsRead.label')}</Text>
 								<Icon
 									as={BookOpenCheck}
 									size={20}
-									className={cn('ml-auto text-foreground-muted')}
+									className={cn('text-foreground-muted ml-auto')}
 								/>
 							</DropdownMenuItem>
 							{progression.hasProgress && <DropdownMenuSeparator />}
@@ -73,8 +73,8 @@ export default function AndroidOfflineBookMenu({
 
 					{progression.hasProgress && (
 						<DropdownMenuItem onPress={handleClearProgress}>
-							<Text className="text-lg">{t('bookActions.clearProgress.label')}</Text>
-							<Icon as={CircleMinus} size={20} className={cn('ml-auto text-foreground-muted')} />
+							<Text className="text-lg">{translate('shared.bookActions.clearProgress.label')}</Text>
+							<Icon as={CircleMinus} size={20} className={cn('text-foreground-muted ml-auto')} />
 						</DropdownMenuItem>
 					)}
 				</DropdownMenuGroup>
@@ -84,8 +84,10 @@ export default function AndroidOfflineBookMenu({
 				)}
 
 				<DropdownMenuItem onPress={handleDelete}>
-					<Text className="text-lg text-fill-danger">{t('bookActions.deleteBook.label')}</Text>
-					<Icon as={Trash} size={20} className={cn('ml-auto text-fill-danger')} />
+					<Text className="text-lg text-fill-danger">
+						{translate('shared.bookActions.deleteBook.label')}
+					</Text>
+					<Icon as={Trash} size={20} className={cn('text-fill-danger ml-auto')} />
 				</DropdownMenuItem>
 			</DropdownMenuContent>
 		</DropdownMenu>
