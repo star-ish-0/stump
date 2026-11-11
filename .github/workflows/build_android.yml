@@ -46,6 +46,8 @@ jobs:
 
       - name: Build release APK
         working-directory: apps/expo/android
+        env:
+          SENTRY_DISABLE_AUTO_UPLOAD: 'true'
         run: |
           chmod +x gradlew
           ./gradlew assembleRelease --stacktrace \
