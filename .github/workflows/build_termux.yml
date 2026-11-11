@@ -1,8 +1,6 @@
-name: Build Server + Web (ARM64 glibc)
+name: Build Server + Web (ARM64)
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -10,9 +8,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      # ========== Build Web ==========
+      # ========== Web ==========
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -29,27 +28,23 @@ jobs:
         run: yarn build
         working-directory: apps/web
 
-      # O vite output vai para apps/web/dist (veja vite.config.ts: outDir: '../dist')
-      # Agora precisa estar em apps/dist/ para o server encontrar
-      - name: Move dist to correct location
+      - name: Move dist to bundle location
         run: |
           mkdir -p apps/dist
           cp -r apps/web/dist/* apps/dist/
-          ls -la apps/dist/
+          ls apps/dist | head
 
-      # ========== Build Server ==========
+      # ========== Server (aarch64 musl, static) ==========
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
         with:
-          targets: aarch64-unknown-linux-gnu
+          toolchain: 1.97.1
+          targets: aarch64-unknown-linux-musl
 
-      - name: Verify Rust target
-        run: rustup target list --installed | grep aarch64-unknown-linux-gnu || rustup target add aarch64-unknown-linux-gnu
-
-      - name: Install cross-compile toolchain
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+      - name: Install cross
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
 
       - name: Cache Cargo
         uses: actions/cache@v4
@@ -58,72 +53,69 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: cargo-aarch64-glibc-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: cargo-aarch64-glibc-
+          key: cargo-aarch64-musl-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-aarch64-musl-
 
-      - name: Build server (ARM64 glibc)
+      - name: Build server (aarch64-unknown-linux-musl)
         run: |
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
-          cargo build --release --target aarch64-unknown-linux-gnu -p stump_server
+          sed -i '/apps\/desktop\/src-tauri/d' Cargo.toml
+          cross build --release --target aarch64-unknown-linux-musl -p stump_server
+          file target/aarch64-unknown-linux-musl/release/stump_server
 
-      # ========== Package Everything ==========
+      # ========== PDFium (arm64) ==========
+      - name: Download PDFium (linux-arm64)
+        run: |
+          mkdir -p pdfium
+          curl -sLo pdfium.tgz https://github.com/bblanchon/pdfium-binaries/releases/download/chromium/7763/pdfium-linux-arm64.tgz
+          tar -xzf pdfium.tgz -C pdfium
+          echo "c23942df3dc35f95a7bfa75fc52a480e77b5b0ca  pdfium/lib/libpdfium.so" | sha1sum -c -
+          rm pdfium.tgz
+
+      # ========== Package ==========
       - name: Create deployment package
         run: |
-          mkdir -p stump-arm64
-          cp target/aarch64-unknown-linux-gnu/release/stump_server stump-arm64/
-          cp -r apps/dist stump-arm64/
-          
-          # Create run script
+          mkdir -p stump-arm64/lib
+          cp target/aarch64-unknown-linux-musl/release/stump_server stump-arm64/
+          cp -r apps/dist stump-arm64/dist
+          cp pdfium/lib/libpdfium.so stump-arm64/lib/
+
           cat > stump-arm64/run.sh << 'EOF'
           #!/bin/bash
-          # Stump Server - Web + Backend Bundle
-          # A web deve estar na pasta 'dist/' dentro do mesmo diretório que este script
-          
           DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
           export STUMP_CLIENT_DIR="$DIR/dist"
-          
-          echo "Starting Stump Server..."
-          echo "Web files at: $STUMP_CLIENT_DIR"
-          
+          export PDFIUM_PATH="$DIR/lib/libpdfium.so"
+          echo "Starting Stump Server (web at $STUMP_CLIENT_DIR)..."
           exec "$DIR/stump_server" "$@"
           EOF
           chmod +x stump-arm64/run.sh
-          
-          # Create README
+
           cat > stump-arm64/README.md << 'EOF'
-          # Stump Server + Web (ARM64)
-          
-          ## Como usar
-          
+          # Stump Server + Web (Linux ARM64, musl static)
+
+          Binario estatico: roda em qualquer distro Linux ARM64 com glibc ou musl,
+          incluindo Debian no proot-distro (Termux).
+
+          ## Como usar (proot-distro debian no Termux)
+
           ```bash
-          # Extrair
           tar xzf stump-server-web-arm64.tar.gz
           cd stump-arm64
-          
-          # Rodar
           ./run.sh
-          # ou
-          ./stump_server
           ```
-          
-          O servidor vai servir a web automaticamente em `http://localhost:3000`
-          
-          ## Estrutura
-          - `stump_server` - Servidor Rust compilado para ARM64
-          - `dist/` - Interface web (HTML, CSS, JS)
-          - `run.sh` - Script para rodar o servidor
-          
-          ## Configurações
-          
-          Use variáveis de ambiente ou arquivo de config para customizar:
+
+          - Web: http://localhost:10801
+          - Binario: stump_server (estatico, nao depende de libs do sistema)
+          - dist/: interface web embutida (STUMP_CLIENT_DIR)
+          - lib/libpdfium.so: suporte a PDF (PDFIUM_PATH)
+
+          ## Configuracao
+
           ```bash
-          STUMP_CLIENT_DIR=./dist ./stump_server
+          STUMP_PORT=1337 STUMP_CLIENT_DIR=./dist ./stump_server
           ```
           EOF
-          
-          # List contents
+
           ls -la stump-arm64/
-          ls -la stump-arm64/dist/
 
       - name: Create tarball
         run: |
@@ -135,15 +127,5 @@ jobs:
         with:
           name: stump-server-web-arm64
           path: stump-server-web-arm64.tar.gz
+          if-no-files-found: error
           retention-days: 14
-
-      - name: Info
-        run: |
-          echo "✅ Build completo!"
-          echo "📦 Package: stump-server-web-arm64.tar.gz"
-          echo "🎯 Target: ARM64 (glibc)"
-          echo ""
-          echo "Para usar:"
-          echo "  tar xzf stump-server-web-arm64.tar.gz"
-          echo "  cd stump-arm64"
-          echo "  ./run.sh"
